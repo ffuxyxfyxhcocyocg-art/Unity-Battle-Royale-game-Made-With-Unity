@@ -1,0 +1,72 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão do jogo (ex.: 1.0.1)"
+        required: true
+        default: "0.1.1"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Build signed Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Validate signing secrets
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEYALIAS_NAME }}
+          KEY_ALIAS_PASS: ${{ secrets.ANDROID_KEYALIAS_PASS }}
+        run: |
+          test -n "$KEYSTORE_B64" || (echo "::error::Configure ANDROID_KEYSTORE_BASE64 in repository secrets"; exit 1)
+          test -n "$KEYSTORE_PASS" || (echo "::error::Configure ANDROID_KEYSTORE_PASS in repository secrets"; exit 1)
+          test -n "$KEY_ALIAS" || (echo "::error::Configure ANDROID_KEYALIAS_NAME in repository secrets"; exit 1)
+          test -n "$KEY_ALIAS_PASS" || (echo "::error::Configure ANDROID_KEYALIAS_PASS in repository secrets"; exit 1)
+          echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/battleroyale-release.keystore"
+
+      - name: Build with Unity
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/battleroyale-release.keystore
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          ANDROID_KEYALIAS_NAME: ${{ secrets.ANDROID_KEYALIAS_NAME }}
+          ANDROID_KEYALIAS_PASS: ${{ secrets.ANDROID_KEYALIAS_PASS }}
+          GAME_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+        with:
+          projectPath: BattleRoyale
+          unityVersion: 2018.1.0f2
+          targetPlatform: Android
+          buildMethod: BattleRoyaleAndroidBuild.PerformBuild
+          buildsPath: build
+          allowDirtyBuild: true
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BattleRoyale-Android-APK
+          path: build/Android/BattleRoyale.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Battle Royale ${{ github.ref_name }}
+          generate_release_notes: true
+          files: build/Android/BattleRoyale.apk
